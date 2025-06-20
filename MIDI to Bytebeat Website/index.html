@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MIDI to Bytebeat Converter</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.27/build/Midi.min.js"></script>
+</head>
+<body>
+  <h2>MIDI to Bytebeat Converter</h2>
+  <h3>Convert MIDI to Bytebeat online, for free.</h3>
+<div id="drop-zone">
+  <p>Drop your MIDI file here or click to browse</p>
+  <input type="file" id="midiFile" accept=".mid">
+</div>
+
+<label>BPM: <input type="number" id="bpm" value="260"></label>
+<label>Sample Rate: <input type="number" id="rate" value="44100"></label>
+
+<div id="progress-container">
+  <div id="progress-bar"></div>
+</div>
+
+<button onclick="convert()">Convert</button>
+<div id="status"></div>
+<pre id="output"></pre>
+
+<div id="theme-controls">
+  <button onclick="toggleTheme()">🌙 Toggle Dark/Light Mode</button>
+  <button onclick="chooseBackground()">🖼️ Set Background Image</button>
+  <input type="file" id="bgPicker" accept="image/*" style="display: none;">
+</div>
+
+
+
+  <script>
+    function midiToFreq(note) {
+      return 440 * Math.pow(2, (note - 69) / 12);
+    }
+
+    async function convert() {
+      const file = document.getElementById('midiFile').files[0];
+      const bpm = parseInt(document.getElementById('bpm').value);
+      const rate = parseInt(document.getElementById('rate').value);
+      if (!file) return alert("Please select a MIDI file.");
+
+      const arrayBuffer = await file.arrayBuffer();
+      const midi = new Midi(arrayBuffer);
+
+      const events = [];
+      const timeMultiplier = rate * 60 / bpm;
+
+      midi.tracks.forEach(track => {
+        let currentTime = 0;
+        track.notes.forEach(note => {
+          const time = Math.round(note.time * timeMultiplier);
+          const freq = Math.round(midiToFreq(note.midi) * 100) / 100;
+          events.push([time, freq]);
+        });
+      });
+
+      events.sort((a, b) => a[0] - b[0]);
+
+      const notes = events.map(e => e[1]);
+      const durations = events.map((e, i) => {
+        const next = events[i + 1] ? events[i + 1][0] : e[0] + rate * 0.5;
+        return next - e[0];
+      });
+
+      const jsCode = `
+t => {
+  const freqs = ${JSON.stringify(notes)};
+  const durations = ${JSON.stringify(durations)};
+  let total = 0;
+  const cumulative = durations.map(d => total += d);
+  const loop = cumulative[cumulative.length - 1];
+  const tm = t % loop;
+  let i = 0; while (tm >= cumulative[i]) i++;
+  const f = freqs[i];
+  const pos = tm - (i ? cumulative[i - 1] : 0);
+  const env = Math.exp(-3 * pos / durations[i]);
+  return (Math.sin(2 * Math.PI * f * t / ${rate}) * env * 127) & 127;
+}`.trim();
+
+      document.getElementById('output').textContent = jsCode;
+    }
+    
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('midiFile');
+const statusBox = document.getElementById('status');
+const progressBar = document.getElementById('progress-bar');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.style.background = '#d9ecff';
+});
+dropZone.addEventListener('dragleave', () => {
+  dropZone.style.background = 'transparent';
+});
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.style.background = 'transparent';
+  fileInput.files = e.dataTransfer.files;
+});
+
+async function convert() {
+  const file = fileInput.files[0];
+  const bpm = parseInt(document.getElementById('bpm').value);
+  const rate = parseInt(document.getElementById('rate').value);
+  if (!file) return alert("Please select a MIDI file.");
+
+  statusBox.textContent = "Reading MIDI file...";
+  progressBar.style.width = "10%";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const midi = new Midi(arrayBuffer);
+  progressBar.style.width = "30%";
+  statusBox.textContent = "Parsing notes...";
+
+  const events = [];
+  const timeMultiplier = rate * 60 / bpm;
+
+  midi.tracks.forEach(track => {
+    track.notes.forEach(note => {
+      const time = Math.round(note.time * timeMultiplier);
+      const freq = Math.round(440 * Math.pow(2, (note.midi - 69) / 12) * 100) / 100;
+      events.push([time, freq]);
+    });
+  });
+
+  progressBar.style.width = "60%";
+  statusBox.textContent = "Converting to bytebeat format...";
+
+  events.sort((a, b) => a[0] - b[0]);
+  const notes = events.map(e => e[1]);
+  const durations = events.map((e, i) => {
+    const next = events[i + 1] ? events[i + 1][0] : e[0] + rate * 0.5;
+    return next - e[0];
+  });
+
+  const jsCode = `
+t => {
+  const freqs = ${JSON.stringify(notes)};
+  const durations = ${JSON.stringify(durations)};
+  let total = 0;
+  const cumulative = durations.map(d => total += d);
+  const loop = cumulative[cumulative.length - 1];
+  const tm = t % loop;
+  let i = 0; while (tm >= cumulative[i]) i++;
+  const f = freqs[i];
+  const pos = tm - (i ? cumulative[i - 1] : 0);
+  const env = Math.exp(-3 * pos / durations[i]);
+  return (Math.sin(2 * Math.PI * f * t / ${rate}) * env * 127) & 127;
+}`.trim();
+
+  document.getElementById('output').textContent = jsCode;
+  progressBar.style.width = "100%";
+  statusBox.textContent = "Conversion complete ✔️";
+}
+
+function toggleTheme() {
+  document.body.classList.toggle("dark-mode");
+}
+
+function chooseBackground() {
+  document.getElementById('bgPicker').click();
+}
+
+document.getElementById('bgPicker').addEventListener('change', function (event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    document.body.style.backgroundImage = `url('${e.target.result}')`;
+    document.body.style.backgroundSize = "cover";
+    document.body.style.backgroundAttachment = "fixed";
+    document.body.style.backgroundPosition = "center";
+  };
+  reader.readAsDataURL(file);
+});
+
+  </script>
+</body>
+</html>
